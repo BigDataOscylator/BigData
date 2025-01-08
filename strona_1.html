@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oscylator statystyczny</title>
+    <style>
+        body {
+            font-family: 'Roboto', sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            background-color: #f9f9f9;
+            color: #333;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        .header {
+            background-color: #0056b3;
+            color: white;
+            padding: 20px;
+            text-align: center;
+            font-size: 1.5rem;
+            box-shadow: 0px 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .content {
+            flex: 1;
+            display: flex;
+            flex-direction: row;
+            padding: 20px;
+            gap: 20px;
+        }
+
+        .sidebar {
+            width: 250px;
+            background-color: #ffffff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .main {
+            flex: 1;
+            background-color: #ffffff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
+            position: relative;
+        }
+
+        .details {
+            width: 300px;
+            background-color: #f4f4f4;
+            border-left: 1px solid #ccc;
+            padding: 30px;
+            position: absolute;
+            top: 0;
+            right: 0;
+            height: 100%;
+            box-shadow: -2px 0 5px rgba(0,0,0,0.1);
+            display: none;
+            border-radius: 8px 0 0 8px;
+            font-size: 1.2rem;
+            line-height: 1.8;
+        }
+
+        select {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 20px;
+            font-size: 16px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+        }
+
+        .stats {
+            margin-top: 20px;
+            line-height: 2;
+        }
+
+        .stats h2 {
+            margin-bottom: 10px;
+            font-size: 1.2rem;
+        }
+
+        .stats p {
+            margin: 10px 0;
+            cursor: pointer;
+            color: #0056b3;
+            text-decoration: underline;
+            font-weight: 500;
+            transition: background-color 0.3s, color 0.3s;
+            padding: 5px;
+        }
+
+        .stats p:hover {
+            color: white;
+            background-color: #0056b3;
+            border-radius: 4px;
+        }
+
+        .details h3 {
+            margin-top: 0;
+            font-size: 1.5rem;
+        }
+
+        .details p {
+            margin: 15px 0;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
+    <script>
+        let globalData = {};
+
+        function generateStats() {
+            const instrumentSelect = document.getElementById('instrument');
+            const periodSelect = document.getElementById('period');
+            const selectedInstrument = instrumentSelect.value;
+            const selectedPeriod = periodSelect.value;
+
+            // Zainicjuj kontener na statystyki
+            const statsContainer = document.getElementById('stats');
+            statsContainer.innerHTML = `<h2>Statystyki na ${selectedInstrument} o okresie ${selectedPeriod} lat</h2>`;
+
+            if (globalData[selectedInstrument]) {
+                const data = globalData[selectedInstrument];
+                const months = data.slice(1).map(row => row[0]); // Pomijamy nagłówek (pierwszy wiersz)
+                const stats = data.slice(1).map(row => ({
+                    growth: row[1],               // Wzrost (%)
+                    avgChange: row[2],            // Średnia zmiana (%)
+                    position: row[3],             // Pozycja
+                    maxGrowth: row[4],            // Maksymalny wzrost (%)
+                    maxDrop: row[5],              // Maksymalny spadek (%)
+                }));
+
+                months.forEach((month, index) => {
+                    const { growth, avgChange, position, maxGrowth, maxDrop } = stats[index];
+                    let statText = `${month}: ${growth}% miesięcy z wzrostem`;
+                    statsContainer.innerHTML += `<p onclick="showDetails('${month}', ${avgChange}, ${position}, ${maxGrowth}, ${maxDrop})">${statText}</p>`;
+                });
+            }
+        }
+
+        function showDetails(month, avgChange, position, maxGrowth, maxDrop) {
+            const detailsContainer = document.getElementById('details');
+            detailsContainer.style.display = 'block';
+            detailsContainer.innerHTML = `
+                <h3>Szczegółowe statystyki</h3>
+                <p>Miesiąc: ${month}</p>
+                <p>Średnia zmiana: ${avgChange}%</p>
+                <p>Pozycja: ${position}</p>
+                <p>Maksymalny wzrost: ${maxGrowth}%</p>
+                <p>Maksymalny spadek: ${maxDrop}%</p>
+            `;
+        }
+
+        function handleFile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const data = e.target.result;
+                const workbook = XLSX.read(data, { type: 'binary' });
+
+                // Zakładając, że mamy różne arkusze z danymi dla różnych instrumentów
+                globalData = {};
+
+                workbook.SheetNames.forEach(sheetName => {
+                    const sheet = workbook.Sheets[sheetName];
+                    const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+                    globalData[sheetName] = jsonData;
+                });
+
+                // Po załadowaniu danych, zaktualizuj listę dostępnych instrumentów
+                updateInstrumentSelect();
+            };
+            reader.readAsBinaryString(file);
+        }
+
+        function updateInstrumentSelect() {
+            const instrumentSelect = document.getElementById('instrument');
+            instrumentSelect.innerHTML = "";  // Wyczyść obecną listę
+
+            // Dodajemy opcje do selecta na podstawie dostępnych arkuszy
+            const options = Object.keys(globalData);
+            options.forEach(option => {
+                const optionElement = document.createElement("option");
+                optionElement.value = option;
+                optionElement.textContent = option;  // Nazwa arkusza to nazwa instrumentu
+                instrumentSelect.appendChild(optionElement);
+            });
+
+            // Po zaktualizowaniu listy, generujemy statystyki dla pierwszego instrumentu
+            if (options.length > 0) {
+                instrumentSelect.value = options[0];
+                generateStats();
+            }
+        }
+
+        // Zmiana interwału (okresu) automatycznie przelicza dane
+        document.getElementById('period').addEventListener('change', generateStats);
+    </script>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Oscylator statystyczny</h1>
+        </div>
+
+        <div class="content">
+            <div class="sidebar">
+                <label for="instrument">Wybierz instrument:</label>
+                <select id="instrument" onchange="generateStats()">
+                    <!-- Opcje będą dynamicznie dodawane po załadowaniu pliku Excel -->
+                </select>
+
+                <label for="period">Wybierz okres:</label>
+                <select id="period">
+                    <option value="5">5 lat</option>
+                    <option value="10">10 lat</option>
+                    <option value="15">15 lat</option>
+                </select>
+
+                <label for="excelFile">Wybierz plik Excel:</label>
+                <input type="file" id="excelFile" accept=".xlsx, .xls" onchange="handleFile(event)">
+            </div>
+
+            <div class="main">
+                <div id="stats" class="stats">
+                    <h2>Statystyki dla wybranego instrumentu</h2>
+                    <p>Wybierz instrument, aby zobaczyć statystyki.</p>
+                </div>
+                <div id="details" class="details"></div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
