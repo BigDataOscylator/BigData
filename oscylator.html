@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oscylator statystyczny</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            display: flex;
+        }
+        nav {
+            width: 250px;
+            background-color: #f4f4f4;
+            padding: 15px;
+            border-right: 1px solid #ddd;
+            box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
+        }
+        nav input, nav select, nav label, nav button {
+            width: 100%;
+            margin-bottom: 15px;
+            padding: 10px;
+            font-size: 1em;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        nav label {
+            margin-bottom: 5px;
+        }
+        main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        header {
+            background-color: #4CAF50;
+            color: white;
+            padding: 20px;
+            text-align: center;
+            font-size: 2em;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .tabs {
+            display: flex;
+            justify-content: center;
+            background-color: #ffffff;
+            padding: 10px 0;
+            margin-top: 15px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .tabs button {
+            margin: 0 5px;
+            padding: 15px 30px;
+            border: 2px solid #4CAF50;
+            border-radius: 5px;
+            background-color: #ffffff;
+            cursor: pointer;
+            font-size: 1em;
+            color: #4CAF50;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+        .tabs button:hover {
+            background-color: #4CAF50;
+            color: white;
+        }
+        .tabs button.active {
+            background-color: #4CAF50;
+            color: white;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+        }
+        .content {
+            display: none;
+            padding: 20px;
+            flex: 1;
+        }
+        .content.active {
+            display: block;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        table, th, td {
+            border: 1px solid #ddd;
+        }
+        th {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px;
+        }
+        td {
+            padding: 10px;
+            text-align: left;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        tr:hover {
+            background-color: #f1f1f1;
+        }
+        .direction-long {
+            color: green;
+            font-weight: bold;
+        }
+        .direction-short {
+            color: red;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <nav>
+        <input type="file" id="fileInput" accept=".xlsx, .xls" />
+        <label for="instrumentSelect">Wybierz instrument:</label>
+        <select id="instrumentSelect">
+            <option value="">-- Wybierz --</option>
+        </select>
+        <label for="startDateSelect">Data początkowa:</label>
+        <select id="startDateSelect">
+            <option value="">-- Wybierz datę --</option>
+        </select>
+        <label for="endDateSelect">Data końcowa:</label>
+        <select id="endDateSelect">
+            <option value="">-- Wybierz datę --</option>
+        </select>
+        <button id="applyDateFilter">Zastosuj filtr</button>
+    </nav>
+    <main>
+        <header>Oscylator Statystyczny</header>
+        <div class="tabs">
+            <button id="tab-data" class="active">Dane</button>
+            <button id="tab-analysis">Analiza instrumentu</button>
+            <button id="tab-chart">Wykres</button>
+        </div>
+        <div id="data-section" class="content active">
+            <table id="dataTable">
+                <thead>
+                    <tr id="tableHeader"></tr>
+                </thead>
+                <tbody id="tableBody"></tbody>
+            </table>
+        </div>
+        <div id="analysis-section" class="content">
+            <h2>Analiza instrumentu</h2>
+            <table id="effectivenessByMonthTable">
+                <thead>
+                    <tr>
+                        <th>Miesiąc</th>
+                        <th>Effectivness</th>
+                        <th>Range %</th>
+                        <th>Range</th>
+                        <th>Max range</th>
+                        <th>Min range</th>
+                        <th>Direction</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <div id="chart-section" class="content">
+            <h2>Wykres</h2>
+            <canvas id="chartCanvas"></canvas>
+        </div>
+    </main>
+
+    <script>
+        const tabs = document.querySelectorAll('.tabs button');
+        const sections = document.querySelectorAll('.content');
+        const fileInput = document.getElementById('fileInput');
+        const instrumentSelect = document.getElementById('instrumentSelect');
+        const startDateSelect = document.getElementById('startDateSelect');
+        const endDateSelect = document.getElementById('endDateSelect');
+        const applyDateFilterButton = document.getElementById('applyDateFilter');
+        const tableHeader = document.getElementById('tableHeader');
+        const tableBody = document.getElementById('tableBody');
+        const effectivenessByMonthTable = document.getElementById('effectivenessByMonthTable').querySelector('tbody');
+        const chartCanvas = document.getElementById('chartCanvas');
+        let workbook, currentData = [], filteredData = [], chart;
+
+        tabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                tabs.forEach(btn => btn.classList.remove('active'));
+                sections.forEach(section => section.classList.remove('active'));
+                tab.classList.add('active');
+                const sectionId = tab.id.replace('tab-', '') + '-section';
+                document.getElementById(sectionId).classList.add('active');
+                if (sectionId === 'chart-section') updateChart();
+                if (sectionId === 'analysis-section') updateAnalysis();
+            });
+        });
+
+        fileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const data = new Uint8Array(e.target.result);
+                workbook = XLSX.read(data, { type: 'array' });
+                updateDropdown();
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        function updateDropdown() {
+            instrumentSelect.innerHTML = '<option value="">-- Wybierz --</option>';
+            workbook.SheetNames.forEach(sheetName => {
+                const option = document.createElement('option');
+                option.value = sheetName;
+                option.textContent = sheetName;
+                instrumentSelect.appendChild(option);
+            });
+        }
+
+        instrumentSelect.addEventListener('change', () => {
+            const selectedInstrument = instrumentSelect.value;
+            if (!selectedInstrument) return;
+            const sheet = workbook.Sheets[selectedInstrument];
+            currentData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+            extractDates(currentData);
+            updateTable(currentData);
+        });
+
+        function extractDates(data) {
+            const headerRow = data[0];
+            const dateIndex = headerRow.indexOf("Date");
+            const availableDates = data.slice(1).map(row => {
+                const excelDate = row[dateIndex];
+                const date = new Date((excelDate - 25569) * 86400 * 1000);
+                return date.toISOString().split('T')[0];
+            }).filter((value, index, self) => self.indexOf(value) === index);
+            updateDateSelects(availableDates);
+        }
+
+        function updateDateSelects(dates) {
+            startDateSelect.innerHTML = '<option value="">-- Wybierz datę --</option>';
+            endDateSelect.innerHTML = '<option value="">-- Wybierz datę --</option>';
+            dates.forEach(date => {
+                const startOption = document.createElement('option');
+                startOption.value = date;
+                startOption.textContent = date;
+                startDateSelect.appendChild(startOption);
+                const endOption = document.createElement('option');
+                endOption.value = date;
+                endOption.textContent = date;
+                endDateSelect.appendChild(endOption);
+            });
+        }
+
+        applyDateFilterButton.addEventListener('click', () => {
+            const startDate = new Date(startDateSelect.value);
+            const endDate = new Date(endDateSelect.value);
+            filteredData = currentData.filter((row, index) => {
+                if (index === 0) return true;
+                const excelDate = row[currentData[0].indexOf("Date")];
+                const rowDate = new Date((excelDate - 25569) * 86400 * 1000);
+                return rowDate >= startDate && rowDate <= endDate;
+            });
+            updateTable(filteredData);
+            updateAnalysis();
+            updateChart();
+        });
+
+        function updateTable(data) {
+            tableHeader.innerHTML = '';
+            tableBody.innerHTML = '';
+            const headerRow = data[0];
+            headerRow.forEach(header => {
+                const th = document.createElement('th');
+                th.textContent = header;
+                tableHeader.appendChild(th);
+            });
+            data.slice(1).forEach(row => {
+                const tr = document.createElement('tr');
+                row.forEach((cell, index) => {
+                    const td = document.createElement('td');
+                    const columnName = headerRow[index];
+                    if (columnName === 'Date') {
+                        const date = new Date((cell - 25569) * 86400 * 1000);
+                        td.textContent = date.toISOString().split('T')[0];
+                    } else if (['Różnica', 'MaxOdch'].includes(columnName)) {
+                        td.textContent = parseFloat(cell).toFixed(2);
+                    } else if (['Zmienna', 'RóżnicaMM'].includes(columnName)) {
+                        td.textContent = (parseFloat(cell) * 100).toFixed(2) + '%';
+                    } else {
+                        td.textContent = cell;
+                    }
+                    tr.appendChild(td);
+                });
+                tableBody.appendChild(tr);
+            });
+        }
+
+        function updateAnalysis() {
+            if (!filteredData || filteredData.length === 0) return;
+            const headerRow = filteredData[0];
+            const dataRows = filteredData.slice(1);
+            const dateIndex = headerRow.indexOf("Date");
+            const effectivenessIndex = headerRow.indexOf("effectivness");
+            const variableIndex = headerRow.indexOf("Zmienna");
+            const differenceIndex = headerRow.indexOf("Różnica");
+            const monthlyData = Array(12).fill(null).map(() => ({
+                count: 0,
+                effectivenessSum: 0,
+                variableSum: 0,
+                differenceSum: 0,
+                maxDifference: -Infinity,
+                minDifference: Infinity
+            }));
+
+            dataRows.forEach(row => {
+                const date = new Date((row[dateIndex] - 25569) * 86400 * 1000);
+                const month = date.getMonth();
+                monthlyData[month].count++;
+                monthlyData[month].effectivenessSum += row[effectivenessIndex] || 0;
+                monthlyData[month].variableSum += (row[variableIndex] || 0) * 100;
+                monthlyData[month].differenceSum += row[differenceIndex] || 0;
+                monthlyData[month].maxDifference = Math.max(monthlyData[month].maxDifference, row[differenceIndex] || 0);
+                monthlyData[month].minDifference = Math.min(monthlyData[month].minDifference, row[differenceIndex] || 0);
+            });
+
+            const months = ["Styczeń", "Luty", "Marzec", "Kwiecień", "Maj", "Czerwiec", "Lipiec", "Sierpień", "Wrzesień", "Październik", "Listopad", "Grudzień"];
+            effectivenessByMonthTable.innerHTML = '';
+            months.forEach((month, index) => {
+                const data = monthlyData[index];
+                const tr = document.createElement('tr');
+                const monthTd = document.createElement('td');
+                monthTd.textContent = month;
+                tr.appendChild(monthTd);
+                const effectivenessTd = document.createElement('td');
+                effectivenessTd.textContent = data.count > 0 ? ((data.effectivenessSum / data.count) * 100).toFixed(2) + '%' : '0%';
+                tr.appendChild(effectivenessTd);
+                const rangeVariableTd = document.createElement('td');
+                rangeVariableTd.textContent = data.count > 0 ? (data.variableSum / data.count).toFixed(2) + '%' : '0%';
+                tr.appendChild(rangeVariableTd);
+                const rangeDifferenceTd = document.createElement('td');
+                rangeDifferenceTd.textContent = data.count > 0 ? (data.differenceSum / data.count).toFixed(2) : '0';
+                tr.appendChild(rangeDifferenceTd);
+                const maxRangeTd = document.createElement('td');
+                maxRangeTd.textContent = data.count > 0 ? data.maxDifference.toFixed(2) : '0';
+                tr.appendChild(maxRangeTd);
+                const minRangeTd = document.createElement('td');
+                minRangeTd.textContent = data.count > 0 ? data.minDifference.toFixed(2) : '0';
+                tr.appendChild(minRangeTd);
+                const directionTd = document.createElement('td');
+                directionTd.textContent = data.count > 0 && (data.effectivenessSum / data.count) > 0.5 ? 'LONG' : 'SHORT';
+                directionTd.className = data.count > 0 && (data.effectivenessSum / data.count) > 0.5 ? 'direction-long' : 'direction-short';
+                tr.appendChild(directionTd);
+                effectivenessByMonthTable.appendChild(tr);
+            });
+        }
+
+        function updateChart() {
+            if (!filteredData || filteredData.length === 0) return;
+            const headerRow = filteredData[0];
+            const dataRows = filteredData.slice(1);
+            const dateIndex = headerRow.indexOf("Date");
+            const closeIndex = headerRow.indexOf("Close");
+            const labels = dataRows.map(row => new Date((row[dateIndex] - 25569) * 86400 * 1000).toISOString().split('T')[0]);
+            const data = dataRows.map(row => row[closeIndex]);
+            if (chart) chart.destroy();
+            chart = new Chart(chartCanvas, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Close',
+                        data: data,
+                        borderColor: 'blue',
+                        backgroundColor: 'rgba(0, 0, 255, 0.1)',
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: { title: { display: true, text: 'Wykres wartości Close' } },
+                    scales: {
+                        x: { title: { display: true, text: 'Data' } },
+                        y: { title: { display: true, text: 'Close' } }
+                    }
+                }
+            });
+        }
+    </script>
+</body>
+</html>
+
